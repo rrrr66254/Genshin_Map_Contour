@@ -16,6 +16,21 @@
 - 경로 계산: **0.16초** (기존 Lazy Theta* 3.6초)
 - 레이어 생성: 처음 약 4초, 이후 캐시를 쓰면 0.08초
 
+## 목차
+
+- [빠른 시작](#빠른-시작)
+- [저장소 구성](#저장소-구성)
+- [명령어](#명령어)
+- [내 지도로 쓰기](#내-지도로-쓰기)
+- [출력 파일과 설정 파일](#출력-파일과-설정-파일)
+- [인식이 맞는지 확인하는 법](#인식이-맞는지-확인하는-법)
+- [무엇이 문제였고 어떻게 바꿨나](#무엇이-문제였고-어떻게-바꿨나)
+- [처리 순서](#처리-순서)
+- [슬라이더 설명](#슬라이더-설명)
+- [경로 비용 (COST)](#경로-비용-cost)
+- [문제 해결](#문제-해결)
+- [한계와 다음 단계](#한계와-다음-단계)
+
 ---
 
 ## 빠른 시작
@@ -32,9 +47,32 @@ python map_terrain.py samples/starfell_valley.jpg
 python map_terrain.py samples/starfell_valley.jpg --from 440,500 --to 990,380
 ```
 
+- Python 3.9 이상이면 됩니다. Windows, Python 3.14에서 확인했습니다.
 - 실행할 때마다 self-check가 먼저 돌고 `selfcheck ok`가 나오면 정상입니다.
-- 내 지도를 쓰려면 경로만 바꾸면 됩니다. 그레이스케일이나 contour 이미지가 아닌 **원본 컬러 스크린샷**이어야 합니다.
-- 좌표는 지도 이미지의 픽셀 좌표(x, y)입니다.
+- 모든 명령은 clone한 폴더(`Genshin_Map_Contour`) 안에서 실행합니다.
+- 좌표는 지도 이미지의 픽셀 좌표(x, y)입니다. 왼쪽 위가 (0, 0)입니다.
+
+## 저장소 구성
+
+```
+Genshin_Map_Contour/
+├── map_terrain.py          # 코드 전부 (인식, 경로탐색, 튜너, 라벨링, 평가)
+├── requirements.txt        # numpy, scipy, opencv-python-headless, matplotlib
+├── samples/
+│   └── starfell_valley.jpg # 샘플 지도 (1280×800, UID 흐림 처리)
+└── docs/                   # README 그림
+```
+
+`map_terrain.py`의 주요 함수:
+
+| 함수 | 하는 일 |
+|---|---|
+| `build_layers(path)` | 지도 파일 → 레이어 dict (캐시 사용) |
+| `detect(bgr)` | 이미지 배열 → 레이어 dict (캐시 없이) |
+| `plan(L, start, goal)` | 경로 좌표, 총 비용, waypoint 반환. 갈 수 없으면 `(None, inf, None)` |
+| `render_labels(L)` | 클래스별 색 + 범례 이미지 |
+| `evaluate(L, gt)` | 정답 점 대비 정밀도·재현율·혼동행렬 |
+| `DETECT`, `COST` | 인식 값과 경로 비용 (dict, 실행 중에 바꿔도 됨) |
 
 ## 명령어
 
@@ -75,6 +113,37 @@ path, cost, waypoints = mt.plan(L, (440, 500), (990, 380))
 ![path tuner](docs/tuner_path.jpg)
 
 정한 값은 `map_terrain.py` 맨 위의 `COST`에 붙여넣으면 됩니다. 터미널에 매번 출력됩니다.
+
+---
+
+## 내 지도로 쓰기
+
+1. 게임에서 지도(M)를 열고 **화면 전체를 스크린샷**합니다. 원본 컬러 그대로 저장합니다(PNG 또는 JPG).
+2. 어디에 저장해도 됩니다. 한글이나 공백이 있는 경로도 됩니다(따옴표로 감싸기).
+3. 샘플 대신 그 경로를 넣어 실행합니다.
+   ```bash
+   python map_terrain.py "내지도.png"
+   python map_terrain.py "내지도.png" --tune-detect
+   ```
+4. 출발·도착 좌표는 결과 PNG(`내지도_labels.png`)를 그림판 등으로 열어서 마우스 위치의 픽셀 좌표를 읽으면 됩니다. `--tune`에서는 클릭으로 바로 정할 수 있습니다.
+
+- 인식 값(`DETECT`)은 1280×800 샘플 기준으로 맞춰져 있습니다. 해상도나 줌이 많이 다르면 `--tune-detect`에서 먼저 확인하세요. 길이·크기 값(`*_min_len`, `*_max_side`, `town_min_area`)은 해상도에 비례해서 조정합니다.
+- 지도 줌 단계가 바뀌면 길 굵기와 절벽 그림자 폭도 바뀝니다. 같은 줌으로 찍은 스크린샷끼리는 같은 설정을 그대로 쓸 수 있습니다.
+
+## 출력 파일과 설정 파일
+
+| 파일 | 언제 생기나 | 내용 |
+|---|---|---|
+| `<지도>_water.png` 등 | 기본 실행 | 클래스별 흑백 마스크 (`_water`, `_road`, `_town`, `_cliff`, `_ui`) |
+| `<지도>_altitude.png` | 기본 실행 | 상대 고도 컬러맵 |
+| `<지도>_labels.png` | 기본 실행, 튜너 저장 | 클래스별 색 + 범례 |
+| `<지도>_path.png` | `--from --to` | 경로(노랑)와 waypoint(분홍) |
+| `<지도>.layers.v4.<해시>.npz` | 첫 실행 | 레이어 캐시. 지도나 인식 값이 바뀌면 새로 만듦 |
+| `<지도>.gt.json` | `--label` | 정답 점 (좌표, 정답, 가중치) |
+| `map_detect.json` | 튜너에서 **저장** | 인식 값. `map_terrain.py`와 같은 폴더에 생기고, 이후 모든 실행이 자동으로 읽음 |
+
+- 인식 값을 처음 상태로 되돌리려면 `map_detect.json`을 지우면 됩니다.
+- 캐시(`.npz`), 결과 PNG, 정답 파일은 `.gitignore`에 들어 있어 커밋되지 않습니다. 팀원과 정답이나 설정을 공유하려면 `git add -f`로 직접 추가하세요.
 
 ---
 
@@ -153,6 +222,18 @@ path, cost, waypoints = mt.plan(L, (440, 500), (990, 380))
 | `cliff_up` | 120 | 절벽을 **오를 때** 1px당 추가 비용 |
 | `cliff_down` | 18 | 절벽을 **내려갈 때**(점프·활공) 1px당 추가 비용 |
 | `climb` | 800 | 상대 고도가 오른 만큼 붙는 비용 |
+
+## 문제 해결
+
+| 증상 | 원인과 해결 |
+|---|---|
+| 튜너 창이 안 뜸 | 창은 matplotlib(Tk)로 띄웁니다. `python -c "import tkinter"`가 실패하면 Python을 Tk 포함으로 다시 설치하세요. OpenCV 창은 쓰지 않으므로 headless OpenCV여도 됩니다 |
+| 튜너 글자가 □로 나옴 | 한글 폰트가 없는 경우입니다. Windows는 맑은 고딕을 자동으로 씁니다. macOS는 AppleGothic, Linux는 `fonts-nanum`을 설치하세요 |
+| `Numpy built with MINGW-W64 ... experimental` 경고 | 일부 Windows용 numpy 빌드가 내는 경고이고 결과에는 영향이 없습니다. 거슬리면 `pip install --force-reinstall numpy` |
+| `selfcheck` 실패(AssertionError) | 코드나 `map_detect.json` 값이 극단적으로 바뀐 경우입니다. `map_detect.json`을 지우고 다시 실행하세요 |
+| 지도를 바꿨는데 결과가 그대로 | 캐시는 파일 수정 시간으로 구분합니다. 같은 이름으로 덮어썼는데 이상하면 `.npz`를 지우세요 |
+| 경로가 `cost=inf` | 출발이나 도착이 물·UI 박스 위이거나 막힌 곳입니다. 좌표를 땅 위로 옮기거나 `--tune`에서 `water`, `cliff_up`을 낮춰 보세요 |
+| `--eval`이 "정답 라벨 없음" | 먼저 `--label`로 같은 지도에 라벨링해야 합니다. 정답 파일은 지도 파일 이름 기준(`<지도>.gt.json`)입니다 |
 
 ## 한계와 다음 단계
 
