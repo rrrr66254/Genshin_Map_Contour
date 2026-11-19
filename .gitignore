@@ -1,0 +1,5 @@
+# caches and outputs written next to the input map
+*.npz
+*.gt.json
+samples/*_*.png
+__pycache__/
